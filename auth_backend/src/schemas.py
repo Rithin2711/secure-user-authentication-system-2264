@@ -16,6 +16,8 @@ _PASSWORD_REGEX = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$")
 
 class SignupRequest(BaseModel):
     """Request body for user registration."""
+    name: str = Field(..., min_length=1, max_length=200, description="User full name.", examples=["Jane Doe"])
+    phone: str = Field(..., min_length=5, max_length=40, description="User phone number.", examples=["+1 555 123 4567"])
     email: EmailStr = Field(..., description="User email address (must be unique).", examples=["user@example.com"])
     password: str = Field(
         ...,
@@ -46,6 +48,7 @@ class AuthResponse(BaseModel):
     token_type: str = Field("bearer", description="Token type (always 'bearer').")
     email: EmailStr = Field(..., description="User email.")
     user_id: int = Field(..., description="User id.")
+    message: str = Field(..., description="Human-readable success message for the client UI.")
 
 
 class ErrorResponse(BaseModel):

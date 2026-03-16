@@ -43,7 +43,12 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)) -> AuthRespons
             detail="Email is already registered.",
         )
 
-    user = User(email=str(payload.email), password_hash=hash_password(payload.password))
+    user = User(
+        name=payload.name.strip(),
+        phone=payload.phone.strip(),
+        email=str(payload.email),
+        password_hash=hash_password(payload.password),
+    )
     db.add(user)
     try:
         db.commit()
@@ -64,7 +69,12 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)) -> AuthRespons
     db.refresh(user)
 
     token = create_access_token(subject=str(user.id), extra_claims={"email": user.email})
-    return AuthResponse(access_token=token, email=user.email, user_id=user.id)
+    return AuthResponse(
+        access_token=token,
+        email=user.email,
+        user_id=user.id,
+        message="Signup Successful",
+    )
 
 
 @router.post(
@@ -83,10 +93,16 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> AuthResponse:
     """Login user and return a JWT token."""
     user = db.query(User).filter(User.email == str(payload.email)).first()
     if not user or not verify_password(payload.password, user.password_hash):
+        # Frontend requirement: show "Login failed" when credentials do not match.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password.",
+            detail="Login failed",
         )
 
     token = create_access_token(subject=str(user.id), extra_claims={"email": user.email})
-    return AuthResponse(access_token=token, email=user.email, user_id=user.id)
+    return AuthResponse(
+        access_token=token,
+        email=user.email,
+        user_id=user.id,
+        message="Login Successfull",
+    )
