@@ -28,6 +28,7 @@ router = APIRouter(prefix="/api", tags=["Authentication"])
         400: {"model": ErrorResponse, "description": "Validation error or weak password."},
         409: {"model": ErrorResponse, "description": "Email already exists."},
         500: {"model": ErrorResponse, "description": "Unexpected server error."},
+        503: {"model": ErrorResponse, "description": "Database is not configured or reachable."},
     },
     operation_id="signup",
     summary="Register a new user",
@@ -39,30 +40,36 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)) -> AuthRespons
     Persists the submitted signup fields (name, phone, email, hashed password)
     into PostgreSQL.
 
-    Notes:
-        In preview environments the database may be temporarily unavailable or
-        not yet configured. In that case, we return a stable 503 error message
-        (JSON) so the frontend can show an actionable failure instead of a proxy
-        "Internal Server Error" text response.
+    Returns:
+        AuthResponse: JWT token + user identity fields and a success message.
+
+    Raises:
+        HTTPException:
+            - 409 when the email is already registered
+            - 503 when the DB is not configured/reachable
+            - 500 on unexpected persistence errors
     """
+    # Fast path: check whether the email already exists so we can return a clear 409
+    # before attempting insert/commit.
     try:
-        # Check if the email already exists (fast path to return 409).
         existing = db.query(User).filter(User.email == str(payload.email)).first()
     except HTTPException:
-        # If the DB dependency raised an HTTPException (e.g., 503), re-raise.
+        # get_db() may raise 503 as HTTPException; re-raise as-is.
         raise
     except Exception as exc:
-        # Any unexpected DB-layer failure should be treated as service unavailable.
+        # Defensive: if the session exists but query fails for any reason.
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database is not configured or not reachable. Please ensure POSTGRES_* (or DATABASE_URL) env vars are set.",
         ) from exc
+
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Signup failed: email already registered.",
         )
 
+    # Persist user with a hashed password.
     user = User(
         name=payload.name.strip(),
         phone=payload.phone.strip(),
@@ -70,6 +77,7 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)) -> AuthRespons
         password_hash=hash_password(payload.password),
     )
     db.add(user)
+
     try:
         db.commit()
     except IntegrityError:
@@ -104,6 +112,7 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)) -> AuthRespons
     responses={
         401: {"model": ErrorResponse, "description": "Invalid credentials."},
         400: {"model": ErrorResponse, "description": "Invalid request."},
+        503: {"model": ErrorResponse, "description": "Database is not configured or reachable."},
     },
     operation_id="login",
     summary="Login",
@@ -114,9 +123,13 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> AuthResponse:
 
     Validates the provided password against the stored bcrypt hash in PostgreSQL.
 
-    Notes:
-        If the DB is not configured/reachable in preview, return a stable 503
-        JSON error for client display and debugging.
+    Returns:
+        AuthResponse: JWT token + user identity fields and a success message.
+
+    Raises:
+        HTTPException:
+            - 401 when credentials do not match
+            - 503 when the DB is not configured/reachable
     """
     try:
         user = db.query(User).filter(User.email == str(payload.email)).first()
@@ -127,8 +140,9 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> AuthResponse:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database is not configured or not reachable. Please ensure POSTGRES_* (or DATABASE_URL) env vars are set.",
         ) from exc
+
     if not user or not verify_password(payload.password, user.password_hash):
-        # Frontend requirement: show "Login failed" when credentials do not match.
+        # Required failure message for UI.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Login failed: invalid email or password.",
