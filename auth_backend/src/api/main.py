@@ -20,7 +20,6 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.db import engine
 from src.models import User  # noqa: F401 (import ensures model metadata is registered)
 from src.db import Base
 from src.api.auth_routes import router as auth_router
@@ -56,10 +55,21 @@ app.add_middleware(
 
 @app.on_event("startup")
 def _startup_create_tables() -> None:
-    """Create database tables at startup (simple bootstrap for this template)."""
-    # For production, use proper migrations (Alembic). For this project template,
-    # creating tables on startup keeps setup friction low.
-    Base.metadata.create_all(bind=engine)
+    """Create database tables at startup (simple bootstrap for this template).
+
+    This is a best-effort bootstrap. If the database is not reachable or DB env
+    vars are not provided in the preview environment, we should still allow the
+    API server to start so it can bind its port and serve the health endpoint.
+    """
+    try:
+        # Lazy import to avoid any DB configuration work at module import time.
+        from src.db import _get_engine
+
+        Base.metadata.create_all(bind=_get_engine())
+    except Exception:
+        # Do not crash the app on startup due to DB issues; route handlers will
+        # still fail if DB is required, but container readiness should succeed.
+        return
 
 
 @app.get(

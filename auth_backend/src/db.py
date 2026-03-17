@@ -23,10 +23,11 @@ Notes:
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 from typing import Generator
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy import Engine, create_engine
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 
 def _env_first(*keys: str) -> str | None:
@@ -43,6 +44,9 @@ def _build_database_url() -> str:
 
     Returns:
         str: SQLAlchemy database URL.
+
+    Raises:
+        RuntimeError: If no usable set of DB env vars are present.
     """
     # 1) Prefer single URL env vars if present.
     url = _env_first("DATABASE_URL", "POSTGRES_URL", "PGDATABASE_URL")
@@ -78,12 +82,23 @@ def _build_database_url() -> str:
     return f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{db}"
 
 
-DATABASE_URL = _build_database_url()
+@lru_cache(maxsize=1)
+def _get_engine() -> Engine:
+    """Create (and memoize) the SQLAlchemy Engine.
 
-# Note: `pool_pre_ping=True` makes the engine more robust to dropped connections.
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+    IMPORTANT: This is intentionally lazy so importing the FastAPI app does not
+    fail when DB env vars are not available yet. This helps the server start and
+    bind its port so readiness checks can hit the health endpoint.
+    """
+    database_url = _build_database_url()
+    # Note: `pool_pre_ping=True` makes the engine more robust to dropped connections.
+    return create_engine(database_url, pool_pre_ping=True)
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+@lru_cache(maxsize=1)
+def _get_sessionmaker() -> sessionmaker:
+    """Create (and memoize) the SQLAlchemy sessionmaker."""
+    return sessionmaker(autocommit=False, autoflush=False, bind=_get_engine())
 
 
 class Base(DeclarativeBase):
@@ -91,12 +106,13 @@ class Base(DeclarativeBase):
 
 
 # PUBLIC_INTERFACE
-def get_db() -> Generator:
+def get_db() -> Generator[Session, None, None]:
     """FastAPI dependency that yields a SQLAlchemy session and ensures it closes.
 
     Yields:
         sqlalchemy.orm.Session: Database session.
     """
+    SessionLocal = _get_sessionmaker()
     db = SessionLocal()
     try:
         yield db
