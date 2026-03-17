@@ -10,7 +10,11 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 HOST="${HOST:-0.0.0.0}"
-PORT="${PORT:-3001}"
+
+# Port selection:
+# Different preview/proxy environments may inject different env var names.
+# Prefer explicit PORT, but fall back to other common ones.
+PORT="${PORT:-${KAVIA_PORT:-${APP_PORT:-3001}}}"
 
 # Prefer local venvs if they exist (repo includes both patterns in some setups).
 if [[ -x ".venv/bin/python" ]]; then

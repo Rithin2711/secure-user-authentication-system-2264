@@ -24,6 +24,8 @@ from src.models import User  # noqa: F401 (import ensures model metadata is regi
 from src.db import Base
 from src.api.auth_routes import router as auth_router
 
+import os
+
 openapi_tags = [
     {
         "name": "System",
@@ -43,10 +45,31 @@ app = FastAPI(
 )
 
 # CORS: frontend will call this API from a browser.
-# In production, restrict allow_origins to the deployed frontend URL(s).
+#
+# IMPORTANT:
+# - If `allow_credentials=True`, you cannot reliably use `allow_origins=["*"]`
+#   for browser-based requests. Browsers require an explicit origin echo.
+# - Configure allowed origins via env var to match preview/prod frontend URLs.
+#
+# Env:
+# - CORS_ALLOW_ORIGINS: comma-separated list of allowed origins
+#   e.g. "https://my-frontend.example.com,https://localhost:3000"
+#
+# If not provided, we default to allowing the known preview frontend (port 3000)
+# plus localhost dev defaults.
+_allow_origins_env = os.getenv("CORS_ALLOW_ORIGINS", "").strip()
+if _allow_origins_env:
+    allow_origins = [o.strip() for o in _allow_origins_env.split(",") if o.strip()]
+else:
+    allow_origins = [
+        "https://vscode-internal-33714-beta.beta01.cloud.kavia.ai:3000",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
