@@ -9,6 +9,7 @@ from typing import Optional
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from pydantic.alias_generators import to_camel
+from pydantic import AliasChoices
 
 
 _PASSWORD_MIN_LEN = 8
@@ -40,7 +41,7 @@ class SignupRequest(BaseModel):
         max_length=200,
         description="User full name.",
         examples=["Jane Doe"],
-        validation_alias=("name", "fullName"),
+        validation_alias=AliasChoices("name", "fullName"),
         serialization_alias="name",
     )
 
@@ -51,7 +52,7 @@ class SignupRequest(BaseModel):
         max_length=40,
         description="User phone number.",
         examples=["+1 555 123 4567"],
-        validation_alias=("phone", "phoneNumber"),
+        validation_alias=AliasChoices("phone", "phoneNumber"),
         serialization_alias="phone",
     )
 
