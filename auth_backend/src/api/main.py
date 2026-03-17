@@ -67,9 +67,17 @@ else:
         "http://127.0.0.1:3000",
     ]
 
+# Also allow dynamic preview origins (the hostname prefix can vary per workspace).
+# This is safer than falling back to "*" because we use allow_credentials=True.
+_allow_origin_regex = os.getenv(
+    "CORS_ALLOW_ORIGIN_REGEX",
+    r"^https://vscode-internal-.*\.cloud\.kavia\.ai:3000$",
+).strip()
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allow_origins,
+    allow_origin_regex=_allow_origin_regex or None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

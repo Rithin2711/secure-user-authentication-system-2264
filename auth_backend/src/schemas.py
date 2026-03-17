@@ -8,8 +8,7 @@ import re
 from typing import Optional
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from pydantic.alias_generators import to_camel
-from pydantic import AliasChoices
+from pydantic import AliasChoices, ConfigDict
 
 
 _PASSWORD_MIN_LEN = 8
@@ -30,18 +29,25 @@ class SignupRequest(BaseModel):
     Compatibility notes (to prevent preview 422s due to client mismatch):
     - Accepts `fullName` as an alias for `name`.
     - Accepts `phoneNumber` as an alias for `phone`.
-    - If `phone` is omitted, it is defaulted to "N/A" (still stored in DB).
+    - Accepts a few common alternative keys used by other templates/forms:
+      - `username` as alias for `name`
+      - `pass` as alias for `password`
+    - Ignores unknown extra fields (e.g., `confirmPassword`) rather than 422-ing.
+    - If `phone` is omitted (or empty), it is defaulted to "N/A" (still stored in DB).
       This preserves the DB's NOT NULL constraint while keeping API tolerant.
     """
 
-    # Accept common alt key "fullName" used by some client forms.
+    # Accept unknown keys without failing request validation.
+    model_config = ConfigDict(extra="ignore")
+
+    # Accept common alt keys used by some client forms.
     name: str = Field(
         ...,
         min_length=1,
         max_length=200,
         description="User full name.",
         examples=["Jane Doe"],
-        validation_alias=AliasChoices("name", "fullName"),
+        validation_alias=AliasChoices("name", "fullName", "username"),
         serialization_alias="name",
     )
 
@@ -65,6 +71,8 @@ class SignupRequest(BaseModel):
         min_length=_PASSWORD_MIN_LEN,
         description="Password (min 8 chars, must contain uppercase, lowercase, and number).",
         examples=["Str0ngPassw0rd"],
+        validation_alias=AliasChoices("password", "pass"),
+        serialization_alias="password",
     )
 
     @field_validator("phone")
