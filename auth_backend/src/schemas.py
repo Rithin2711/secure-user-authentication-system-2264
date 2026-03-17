@@ -8,6 +8,7 @@ import re
 from typing import Optional
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic.alias_generators import to_camel
 
 
 _PASSWORD_MIN_LEN = 8
@@ -15,9 +16,45 @@ _PASSWORD_REGEX = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$")
 
 
 class SignupRequest(BaseModel):
-    """Request body for user registration."""
-    name: str = Field(..., min_length=1, max_length=200, description="User full name.", examples=["Jane Doe"])
-    phone: str = Field(..., min_length=5, max_length=40, description="User phone number.", examples=["+1 555 123 4567"])
+    """Request body for user registration.
+
+    Canonical request body (documented in OpenAPI):
+        {
+          "name": "Jane Doe",
+          "phone": "+1 555 123 4567",
+          "email": "user@example.com",
+          "password": "Str0ngPassw0rd"
+        }
+
+    Compatibility notes (to prevent preview 422s due to client mismatch):
+    - Accepts `fullName` as an alias for `name`.
+    - Accepts `phoneNumber` as an alias for `phone`.
+    - If `phone` is omitted, it is defaulted to "N/A" (still stored in DB).
+      This preserves the DB's NOT NULL constraint while keeping API tolerant.
+    """
+
+    # Accept common alt key "fullName" used by some client forms.
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description="User full name.",
+        examples=["Jane Doe"],
+        validation_alias=("name", "fullName"),
+        serialization_alias="name",
+    )
+
+    # Tolerate missing phone by defaulting; accept common alt key "phoneNumber".
+    phone: str = Field(
+        "N/A",
+        min_length=3,
+        max_length=40,
+        description="User phone number.",
+        examples=["+1 555 123 4567"],
+        validation_alias=("phone", "phoneNumber"),
+        serialization_alias="phone",
+    )
+
     email: EmailStr = Field(..., description="User email address (must be unique).", examples=["user@example.com"])
     password: str = Field(
         ...,
@@ -25,6 +62,13 @@ class SignupRequest(BaseModel):
         description="Password (min 8 chars, must contain uppercase, lowercase, and number).",
         examples=["Str0ngPassw0rd"],
     )
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        # When clients omit phone we store a stable placeholder.
+        v = (v or "").strip()
+        return v if v else "N/A"
 
     @field_validator("password")
     @classmethod
