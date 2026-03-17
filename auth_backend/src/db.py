@@ -26,6 +26,7 @@ import os
 from functools import lru_cache
 from typing import Generator
 
+from fastapi import HTTPException, status
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -109,11 +110,26 @@ class Base(DeclarativeBase):
 def get_db() -> Generator[Session, None, None]:
     """FastAPI dependency that yields a SQLAlchemy session and ensures it closes.
 
+    If database environment variables are missing or the database is unreachable,
+    this raises an HTTP 503 so route handlers do not crash with opaque 500 errors.
+
     Yields:
         sqlalchemy.orm.Session: Database session.
+
+    Raises:
+        fastapi.HTTPException: 503 when DB cannot be initialized.
     """
-    SessionLocal = _get_sessionmaker()
-    db = SessionLocal()
+    try:
+        SessionLocal = _get_sessionmaker()
+        db = SessionLocal()
+    except Exception as exc:
+        # Typically: missing env vars (RuntimeError from _build_database_url)
+        # or connection/driver issues during engine creation.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is not configured or not reachable. Please ensure POSTGRES_* (or DATABASE_URL) env vars are set.",
+        ) from exc
+
     try:
         yield db
     finally:
