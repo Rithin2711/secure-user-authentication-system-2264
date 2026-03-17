@@ -34,13 +34,17 @@ router = APIRouter(prefix="/api", tags=["Authentication"])
     description="Creates a new user account with a unique email and a bcrypt-hashed password.",
 )
 def signup(payload: SignupRequest, db: Session = Depends(get_db)) -> AuthResponse:
-    """Register a new user and return a JWT token."""
+    """Register a new user and return a JWT token.
+
+    Persists the submitted signup fields (name, phone, email, hashed password)
+    into PostgreSQL.
+    """
     # Check if the email already exists (fast path to return 409).
     existing = db.query(User).filter(User.email == str(payload.email)).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Email is already registered.",
+            detail="Signup failed: email already registered.",
         )
 
     user = User(
@@ -57,13 +61,13 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)) -> AuthRespons
         # Defensive: unique constraint can still be hit under race conditions.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Email is already registered.",
+            detail="Signup failed: email already registered.",
         )
     except Exception as exc:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create user.",
+            detail="Signup failed: could not create user.",
         ) from exc
 
     db.refresh(user)
@@ -73,7 +77,7 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)) -> AuthRespons
         access_token=token,
         email=user.email,
         user_id=user.id,
-        message="Signup Successful",
+        message="Signup successful",
     )
 
 
@@ -87,16 +91,19 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)) -> AuthRespons
     },
     operation_id="login",
     summary="Login",
-    description="Validates credentials and returns a signed JWT access token.",
+    description="Validates credentials (email + password) against stored user records and returns a signed JWT access token.",
 )
 def login(payload: LoginRequest, db: Session = Depends(get_db)) -> AuthResponse:
-    """Login user and return a JWT token."""
+    """Login user and return a JWT token.
+
+    Validates the provided password against the stored bcrypt hash in PostgreSQL.
+    """
     user = db.query(User).filter(User.email == str(payload.email)).first()
     if not user or not verify_password(payload.password, user.password_hash):
         # Frontend requirement: show "Login failed" when credentials do not match.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Login failed",
+            detail="Login failed: invalid email or password.",
         )
 
     token = create_access_token(subject=str(user.id), extra_claims={"email": user.email})
@@ -104,5 +111,5 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> AuthResponse:
         access_token=token,
         email=user.email,
         user_id=user.id,
-        message="Login Successfull",
+        message="Login successful",
     )
