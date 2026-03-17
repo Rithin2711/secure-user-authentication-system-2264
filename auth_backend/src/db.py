@@ -45,16 +45,19 @@ def _build_database_url() -> str:
 
     This project runs in multi-container preview environments where:
     - The database may be exposed via a platform-provided POSTGRES_URL string.
-    - The URL may incorrectly point to localhost (from the DB container's own POV),
+    - The URL may point to localhost (valid only from within the DB container),
       while the backend must reach the DB over the container network.
-    - The platform may also provide POSTGRES_HOST/POSTGRES_PORT separately.
+    - The platform may expose the DB to the outside world on a different port than
+      the internal Postgres port. The backend must use the *internal* port.
 
     To keep preview setups robust, we:
     1) Prefer a single URL env var (DATABASE_URL/POSTGRES_URL/PGDATABASE_URL) when present.
     2) Normalize common preview misconfigurations by applying POSTGRES_HOST/POSTGRES_PORT
-       overrides when set.
-    3) If the URL host is localhost-like and POSTGRES_HOST is not set, fall back to a
-       conventional service hostname "auth_database" (the DB container name in this repo).
+       (and PGHOST/PGPORT) overrides when set.
+    3) If the URL host is localhost-like and no explicit host override is supplied,
+       fall back to the service hostname "auth_database" (the DB container name).
+    4) If connecting to "auth_database" and no explicit port override is supplied,
+       default to 5000 (matches auth_database/startup.sh in this repo).
 
     Returns:
         str: SQLAlchemy database URL.
@@ -62,28 +65,39 @@ def _build_database_url() -> str:
     Raises:
         RuntimeError: If no usable set of DB env vars are present.
     """
+    # Internal Postgres port used by the auth_database container in this repo.
+    # NOTE: This is intentionally an app default (not an env var) because preview
+    # environments often inject only partial DB env vars into dependent containers.
+    DEFAULT_INTERNAL_POSTGRES_PORT = 5000
+
     # 1) Prefer single URL env vars if present.
     url = _env_first("DATABASE_URL", "POSTGRES_URL", "PGDATABASE_URL")
     if url:
         # Apply optional host/port overrides. This is especially important in preview where
-        # POSTGRES_URL may contain "localhost" but the backend must connect to the DB container.
-        override_host = os.getenv("POSTGRES_HOST")
-        override_port = os.getenv("POSTGRES_PORT")
+        # POSTGRES_URL may contain "localhost" (DB container POV) or an external proxy port.
+        override_host = _env_first("POSTGRES_HOST", "PGHOST")
+        override_port = _env_first("POSTGRES_PORT", "PGPORT")
 
-        # If POSTGRES_URL targets localhost and no explicit POSTGRES_HOST is supplied,
+        # If URL targets localhost and no explicit host override is supplied,
         # assume the database is reachable via the DB container service name.
-        if not override_host and (
-            "://localhost" in url
-            or "://127.0.0.1" in url
-            or "://0.0.0.0" in url
-        ):
+        localhost_like = (
+            "://localhost" in url or "://127.0.0.1" in url or "://0.0.0.0" in url
+        )
+        if not override_host and localhost_like:
             override_host = "auth_database"
 
-        if override_host or override_port:
-            # Local import to keep module import time minimal.
-            from urllib.parse import urlparse, urlunparse
+        # Local import to keep module import time minimal.
+        from urllib.parse import urlparse, urlunparse
 
-            parsed = urlparse(url)
+        parsed = urlparse(url)
+
+        # If we are targeting the DB service hostname but have no explicit port override,
+        # force the internal port default (5000). This handles cases where the URL
+        # has an external/proxy port that is not routable inside the container network.
+        if (override_host or parsed.hostname) == "auth_database" and not override_port:
+            override_port = str(DEFAULT_INTERNAL_POSTGRES_PORT)
+
+        if override_host or override_port:
             username = parsed.username
             password = parsed.password
             hostname = override_host or (parsed.hostname or "")
