@@ -38,9 +38,25 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)) -> AuthRespons
 
     Persists the submitted signup fields (name, phone, email, hashed password)
     into PostgreSQL.
+
+    Notes:
+        In preview environments the database may be temporarily unavailable or
+        not yet configured. In that case, we return a stable 503 error message
+        (JSON) so the frontend can show an actionable failure instead of a proxy
+        "Internal Server Error" text response.
     """
-    # Check if the email already exists (fast path to return 409).
-    existing = db.query(User).filter(User.email == str(payload.email)).first()
+    try:
+        # Check if the email already exists (fast path to return 409).
+        existing = db.query(User).filter(User.email == str(payload.email)).first()
+    except HTTPException:
+        # If the DB dependency raised an HTTPException (e.g., 503), re-raise.
+        raise
+    except Exception as exc:
+        # Any unexpected DB-layer failure should be treated as service unavailable.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is not configured or not reachable. Please ensure POSTGRES_* (or DATABASE_URL) env vars are set.",
+        ) from exc
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -97,8 +113,20 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> AuthResponse:
     """Login user and return a JWT token.
 
     Validates the provided password against the stored bcrypt hash in PostgreSQL.
+
+    Notes:
+        If the DB is not configured/reachable in preview, return a stable 503
+        JSON error for client display and debugging.
     """
-    user = db.query(User).filter(User.email == str(payload.email)).first()
+    try:
+        user = db.query(User).filter(User.email == str(payload.email)).first()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is not configured or not reachable. Please ensure POSTGRES_* (or DATABASE_URL) env vars are set.",
+        ) from exc
     if not user or not verify_password(payload.password, user.password_hash):
         # Frontend requirement: show "Login failed" when credentials do not match.
         raise HTTPException(
