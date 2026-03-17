@@ -43,6 +43,19 @@ def _env_first(*keys: str) -> str | None:
 def _build_database_url() -> str:
     """Build a PostgreSQL connection URL from environment variables.
 
+    This project runs in multi-container preview environments where:
+    - The database may be exposed via a platform-provided POSTGRES_URL string.
+    - The URL may incorrectly point to localhost (from the DB container's own POV),
+      while the backend must reach the DB over the container network.
+    - The platform may also provide POSTGRES_HOST/POSTGRES_PORT separately.
+
+    To keep preview setups robust, we:
+    1) Prefer a single URL env var (DATABASE_URL/POSTGRES_URL/PGDATABASE_URL) when present.
+    2) Normalize common preview misconfigurations by applying POSTGRES_HOST/POSTGRES_PORT
+       overrides when set.
+    3) If the URL host is localhost-like and POSTGRES_HOST is not set, fall back to a
+       conventional service hostname "auth_database" (the DB container name in this repo).
+
     Returns:
         str: SQLAlchemy database URL.
 
@@ -52,12 +65,51 @@ def _build_database_url() -> str:
     # 1) Prefer single URL env vars if present.
     url = _env_first("DATABASE_URL", "POSTGRES_URL", "PGDATABASE_URL")
     if url:
-        # If user supplies a plain `postgresql://...` URL, SQLAlchemy can still
-        # use it with psycopg2 installed. Keep as-is.
+        # Apply optional host/port overrides. This is especially important in preview where
+        # POSTGRES_URL may contain "localhost" but the backend must connect to the DB container.
+        override_host = os.getenv("POSTGRES_HOST")
+        override_port = os.getenv("POSTGRES_PORT")
+
+        # If POSTGRES_URL targets localhost and no explicit POSTGRES_HOST is supplied,
+        # assume the database is reachable via the DB container service name.
+        if not override_host and (
+            "://localhost" in url
+            or "://127.0.0.1" in url
+            or "://0.0.0.0" in url
+        ):
+            override_host = "auth_database"
+
+        if override_host or override_port:
+            # Local import to keep module import time minimal.
+            from urllib.parse import urlparse, urlunparse
+
+            parsed = urlparse(url)
+            username = parsed.username
+            password = parsed.password
+            hostname = override_host or (parsed.hostname or "")
+            port = int(override_port) if override_port else parsed.port
+
+            # Rebuild netloc, preserving credentials when present.
+            auth = ""
+            if username:
+                auth = username
+                if password is not None:
+                    auth += f":{password}"
+                auth += "@"
+
+            netloc = f"{auth}{hostname}"
+            if port:
+                netloc += f":{port}"
+
+            parsed = parsed._replace(netloc=netloc)
+            url = urlunparse(parsed)
+
+        # If user supplies a plain `postgresql://...` URL, SQLAlchemy can still use it
+        # with psycopg2 installed. Keep the scheme as provided.
         return url
 
     # 2) Compose from components; support both POSTGRES_* and PG* conventions.
-    host = _env_first("POSTGRES_HOST", "PGHOST") or "localhost"
+    host = _env_first("POSTGRES_HOST", "PGHOST") or "auth_database"
     port = _env_first("POSTGRES_PORT", "PGPORT")
     user = _env_first("POSTGRES_USER", "PGUSER")
     password = _env_first("POSTGRES_PASSWORD", "PGPASSWORD")
