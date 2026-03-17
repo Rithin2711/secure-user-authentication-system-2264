@@ -48,7 +48,10 @@ class SignupRequest(BaseModel):
     # Tolerate missing phone by defaulting; accept common alt key "phoneNumber".
     phone: str = Field(
         "N/A",
-        min_length=3,
+        # NOTE: Some clients send `phone: ""` (empty string) when the field is
+        # optional or not yet filled. We accept it here and normalize to "N/A"
+        # in the validator below to avoid preview 422s.
+        min_length=0,
         max_length=40,
         description="User phone number.",
         examples=["+1 555 123 4567"],
