@@ -35,6 +35,10 @@ openapi_tags = [
         "name": "Authentication",
         "description": "User signup and login endpoints.",
     },
+    {
+        "name": "Ingestion",
+        "description": "Mock ingestion endpoints used by the frontend Orchestrator Ingestion tab.",
+    },
 ]
 
 app = FastAPI(
@@ -117,6 +121,45 @@ def health_check():
         dict: `{ "message": "Healthy" }`
     """
     return {"message": "Healthy"}
+
+
+@app.get(
+    "/mock",
+    tags=["Ingestion"],
+    summary="Mock ingestion payload (for UI)",
+    description=(
+        "Returns a stable mock JSON payload used by the frontend Orchestrator "
+        "Ingestion tab. This endpoint intentionally requires no auth."
+    ),
+    operation_id="get_mock_ingestion_payload",
+)
+def get_mock_ingestion_payload():
+    """Return mock ingestion JSON for the frontend.
+
+    The React frontend expects this endpoint to exist at `/mock` and to return a
+    JSON object with a `payload` key containing:
+    - `message`: short description
+    - `meta`: object of key/value metadata
+    - `items`: array of objects to render as a table
+
+    Returns:
+        dict: Mock ingestion JSON response.
+    """
+    return {
+        "payload": {
+            "message": "Mock ingestion payload loaded successfully.",
+            "meta": {
+                "source": "auth_backend",
+                "endpoint": "/mock",
+                "version": "0.1.0",
+            },
+            "items": [
+                {"id": "field_1", "name": "customer_name", "status": "required"},
+                {"id": "field_2", "name": "customer_email", "status": "required"},
+                {"id": "field_3", "name": "order_id", "status": "optional"},
+            ],
+        }
+    }
 
 
 app.include_router(auth_router)
